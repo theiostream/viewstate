@@ -3,7 +3,6 @@
    Designed for Porto website view states. Unsure if fits other cases.
 
    Public domain.
-   (c) 2014 Daniel Ferreira.
 */
 
 // Some special thanks go to "Reverse Engineering ASP .Net 2.0 View State", by Adam Pridgen
@@ -16,6 +15,7 @@
 #include <stdbool.h>
 #include <inttypes.h>
 #include <b64/cdecode.h>
+#include "viewstate.h"
 
 #define SHIFT_VIEWSTATE(v) (*((*v)++))
 
@@ -46,7 +46,7 @@ static int base64_decode(const char *string, size_t len, char **output) {
 #define kViewStateByte 0x03			// 03 [byte]
 #define kViewStateChar 0x04			// 04 [char]
 #define kViewStateString 0x05			// 05 [intformat] [bytes]
-#define kViewStateArray 0x14			// 14 29 [typespec] [len] [bytes]
+#define kViewStateArray 0x14			// 14 [typespec] [len] [bytes]
 #define kViewStateStringArray 0x15		// 15 [arraylen] [strlen] [bytes] ...
 #define kViewStateArrayList 0x16		// 16 [len] [bytes]
 #define kViewStateHybridDictionary 0x18		// 18 [len] [bytes]
@@ -77,79 +77,6 @@ static int base64_decode(const char *string, size_t len, char **output) {
 // Miscellanea
 #define kViewStateNumberOfDefaultTypes 0x04
 #define kViewStateWeirdArraySeparator 0x08
-
-typedef struct type_ type;
-
-typedef enum {
-	kViewStateTypeUnknown,
-	kViewStateTypeNull,
-	kViewStateTypeByte,
-	kViewStateTypeBoolean,
-	kViewStateTypeInteger,
-	kViewStateTypeChar,
-	kViewStateTypeString,
-	kViewStateTypeIndexedString,
-	kViewStateTypeArray,
-	kViewStateTypeStringArray,
-	kViewStateTypeArrayList,
-	kViewStateTypeEnum,
-	kViewStateTypePair,
-	kViewStateTypeTriplet,
-	kViewStateTypeError
-} viewStateType;
-
-typedef struct {
-	type **array;
-	unsigned int length;
-	unsigned int type;
-} typeArray;
-
-typedef struct {
-	int32_t value; // We ignore 64-bit values for now. Sorry.
-	unsigned int type;
-} typeEnumValue;
-
-typedef struct {
-	type *first;
-	type *second;
-} pair;
-
-typedef struct {
-	type *first;
-	type *second;
-	type *third;
-} triplet;
-
-typedef struct {
-	pair *kvPairs;
-} dictionary;
-
-struct type_ {
-	union {
-		unsigned char byte;
-		unsigned char boolean;
-		
-		int32_t integer;
-		
-		uint16_t character;
-		char *string;
-		char *indexedString;
-		
-		typeArray array;
-		char **stringArray;
-		type **arrayList;
-		dictionary dictionary;
-
-		typeEnumValue enumValue;
-
-		pair pair;
-		triplet triplet;
-
-		int error;
-	};
-
-	viewStateType stateType;
-};
 
 /* get_from_indexedstring_cache(int):
 * Takes an index to get a value from the indexed string cache */
@@ -249,8 +176,8 @@ static int _i=0;
 #define LOG(...)
 #endif
 
-type *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
-	type *ret = malloc(sizeof(type));
+vsType *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
+	vsType *ret = malloc(sizeof(vsType));
 	
 	if (needsHeader) {
 		if (SHIFT_VIEWSTATE(viewState) != kUTF16Encoding) {
@@ -323,7 +250,7 @@ type *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 		case kViewStateArray: {
 			int typ = read_type_format(viewState);
 			int32_t len = read_viewstate_int(viewState);
-			type **values = malloc(sizeof(type) * len);
+			vsType **values = malloc(sizeof(vsType *) * len);
 			
 			LOG("ARRAY: %d\n", typ);
 			ITAB;
@@ -346,7 +273,7 @@ type *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 			int32_t len = read_viewstate_int(viewState);
 			unsigned char unknown2 = SHIFT_VIEWSTATE(viewState);
 
-			type **values = malloc(sizeof(type) * len);
+			vsType **values = malloc(sizeof(vsType *) * len);
 			
 			LOG("WEIRD_ARRAY: %d (len = %d)\n", typ, len);
 			ITAB;
@@ -395,7 +322,7 @@ type *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 
 		case kViewStateArrayList: {
 			int32_t len = read_viewstate_int(viewState);
-			type **list = malloc(sizeof(type) * len);
+			vsType **list = malloc(sizeof(vsType *) * len);
 			
 			LOG("ARRAY LIST\n");
 			ITAB;
@@ -445,7 +372,7 @@ type *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 
 		case kViewStateHybridDictionary: {
 			int32_t len = read_viewstate_int(viewState);
-			ret->dictionary.kvPairs = malloc(len * sizeof(pair));
+			ret->dictionary.kvPairs = malloc(len * sizeof(vsPair));
 			
 			LOG("HYBRID DICTIONARY\n");
 			ITAB;
@@ -560,7 +487,7 @@ int main(int argc, char **argv) {
 	fclose(db);
 
 	printf("====== VIEW STATE PARSER by Daniel Ferreira; Public Domain. ======\n");
-	type *t = parse_viewstate((unsigned char **)&bozo, true);
+	vsType *t = parse_viewstate((unsigned char **)&bozo, true);
 
 	return 0;
 }
