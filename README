@@ -1,0 +1,5 @@
+A view state parser originally designed for PortoApp.
+
+Works for ASP.NET View State 2.0. A blog post on it will be around soon.
+
+Still has bugs! I'm posting this code at this exact moment because my mom will turn off power due to weird shit that happened after a thunderstorm.
