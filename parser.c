@@ -49,14 +49,17 @@ static int base64_decode(const char *string, size_t len, char **output) {
 #define kViewStateArray 0x14			// 14 29 [typespec] [len] [bytes]
 #define kViewStateStringArray 0x15		// 15 [arraylen] [strlen] [bytes] ...
 #define kViewStateArrayList 0x16		// 16 [len] [bytes]
+#define kViewStateHybridDictionary 0x18		// 18 [len] [bytes]
 #define kViewStateEnum 0x0b			// 0b [typespec] [value]
 #define kViewStatePair 0x0f			// 0f
 #define kViewStateTriplet 0x10			// 10
 #define kViewStateIndexedString 0x1e		// 1e [len] [bytes]
 #define kViewStateCachedIndexedString 0x1f	// 1f [index]
-// What is 0x3c? It decodes as an array, but wat.
+#define kViewStateWeirdArray 0x3c		// 3c [typespec] [wat(09)] [len] [wat(00)] [bytes] 08 [bytes]...
 
 #define kViewStateNull 0x64
+#define kViewStateEmptyString 0x65
+#define kViewStateNumberZero 0x66
 #define kViewStateBooleanTrue 0x67
 #define kViewStateBooleanFalse 0x68
 
@@ -71,7 +74,9 @@ static int base64_decode(const char *string, size_t len, char **output) {
 #define kViewStateArrayTypeString 0x02 // But we have 0x15 if we want a string array. wat.
 #define kViewStateArrayTypeBoolean 0x03
 
+// Miscellanea
 #define kViewStateNumberOfDefaultTypes 0x04
+#define kViewStateWeirdArraySeparator 0x08
 
 typedef struct type_ type;
 
@@ -115,6 +120,10 @@ typedef struct {
 	type *third;
 } triplet;
 
+typedef struct {
+	pair *kvPairs;
+} dictionary;
+
 struct type_ {
 	union {
 		unsigned char byte;
@@ -129,11 +138,12 @@ struct type_ {
 		typeArray array;
 		char **stringArray;
 		type **arrayList;
+		dictionary dictionary;
 
 		typeEnumValue enumValue;
 
-		pair *pair;
-		triplet *triplet;
+		pair pair;
+		triplet triplet;
 
 		int error;
 	};
@@ -235,6 +245,8 @@ static int _i=0;
 #define ITAB tab[_i]='\t';tab[++_i]='\0';
 #define ETAB tab[_i]='\t';tab[--_i]='\0';
 #define LOG(...) {printf("%s",tab);printf(__VA_ARGS__);}
+#else
+#define LOG(...)
 #endif
 
 type *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
@@ -254,10 +266,10 @@ type *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 
 		// Initialize type map with standard view state types.
 		typeDescriptionMap = (char **)malloc(4 * sizeof(char*));
-		typeDescriptionMap[kViewStateArrayTypeObject] = "_Object";
-		typeDescriptionMap[kViewStateArrayTypeInt] = "_Integer";
-		typeDescriptionMap[kViewStateArrayTypeString] = "_String";
-		typeDescriptionMap[kViewStateArrayTypeBoolean] = "_Boolean";
+		typeDescriptionMap[kViewStateArrayTypeObject] = "System.Object";
+		typeDescriptionMap[kViewStateArrayTypeInt] = "System.Int32";
+		typeDescriptionMap[kViewStateArrayTypeString] = "System.String";
+		typeDescriptionMap[kViewStateArrayTypeBoolean] = "System.Boolean";
 		typeDescriptionMapIndex = kViewStateNumberOfDefaultTypes;
 	}
 	
@@ -285,7 +297,8 @@ type *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 			ret->character = 0;
 			ret->stateType = kViewStateTypeChar;
 			
-			LOG("CHAR: %c\n", ret->character);
+			//LOG("CHAR: %c\n", ret->character);
+			LOG("CHAR: Unimplemented.\n");
 			break;
 		}
 
@@ -327,16 +340,24 @@ type *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 			break;
 		}
 		
-		case 0x3c: {
+		case kViewStateWeirdArray: {
 			int typ = read_type_format(viewState);
+			unsigned char unknown1 = SHIFT_VIEWSTATE(viewState);
 			int32_t len = read_viewstate_int(viewState);
+			unsigned char unknown2 = SHIFT_VIEWSTATE(viewState);
+
 			type **values = malloc(sizeof(type) * len);
 			
-			LOG("WEIRD_ARRAY: %d\n", typ);
+			LOG("WEIRD_ARRAY: %d (len = %d)\n", typ, len);
 			ITAB;
 			int32_t i;
 			for (i=0; i<len; i++) {
 				values[i] = parse_viewstate(viewState, false);
+				if (i+1 != len && SHIFT_VIEWSTATE(viewState) != kViewStateWeirdArraySeparator) {
+					ret->error = 2;
+					ret->stateType = kViewStateTypeError;
+					return ret;
+				}
 			}
 			ETAB;
 
@@ -400,31 +421,41 @@ type *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 		}
 
 		case kViewStatePair: {
-			pair *pr = malloc(sizeof(pair));
-			
 			LOG("PAIR\n");
 			ITAB;
-			pr->first = parse_viewstate(viewState, false);
-			pr->second = parse_viewstate(viewState, false);
+			ret->pair.first = parse_viewstate(viewState, false);
+			ret->pair.second = parse_viewstate(viewState, false);
 			ETAB;
 
-			ret->pair = pr;
 			ret->stateType = kViewStateTypePair;
 			break;
 		}
 
 		case kViewStateTriplet: {
-			triplet *tr = malloc(sizeof(triplet));
-
 			LOG("TRIPLET\n");
 			ITAB;
-			tr->first = parse_viewstate(viewState, false);
-			tr->second = parse_viewstate(viewState, false);
-			tr->third = parse_viewstate(viewState, false);
+			ret->triplet.first = parse_viewstate(viewState, false);
+			ret->triplet.second = parse_viewstate(viewState, false);
+			ret->triplet.third = parse_viewstate(viewState, false);
 			ETAB;
 
-			ret->triplet = tr;
 			ret->stateType = kViewStateTypeTriplet;
+			break;
+		}
+
+		case kViewStateHybridDictionary: {
+			int32_t len = read_viewstate_int(viewState);
+			ret->dictionary.kvPairs = malloc(len * sizeof(pair));
+			
+			LOG("HYBRID DICTIONARY\n");
+			ITAB;
+			int32_t i;
+			for (i=0; i<len; i++) {
+				ret->dictionary.kvPairs[i].first = parse_viewstate(viewState, false);
+				ret->dictionary.kvPairs[i].second = parse_viewstate(viewState, false);
+			}
+			ETAB;
+
 			break;
 		}
 
@@ -465,6 +496,22 @@ type *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 			break;
 		}
 
+		case kViewStateEmptyString: {
+			ret->string = "";
+			ret->stateType = kViewStateTypeString;
+
+			LOG("STRING: <empty>\n");
+			break;
+		}
+
+		case kViewStateNumberZero: {
+			ret->integer = 0;
+			ret->stateType = kViewStateTypeInteger;
+
+			LOG("INTEGER ZERO\n");
+			break;
+		}
+
 		case kViewStateBooleanTrue: {
 			ret->boolean = true;
 			ret->stateType = kViewStateTypeBoolean;
@@ -478,6 +525,13 @@ type *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 			ret->stateType = kViewStateTypeBoolean;
 
 			LOG("FALSE\n");
+			break;
+		}
+
+		case 0xf3: {
+			LOG("ERRONEOUS DATA. INVALID VIEW STATE.\n");
+			ret->error = 3;
+			ret->stateType = kViewStateTypeError;
 			break;
 		}
 
@@ -498,7 +552,6 @@ int main(int argc, char **argv) {
 	fclose(f);
 	
 	char *bozo = NULL;
-	printf("HELLO!\n");
 	int ll = base64_decode(fcontent, strlen(fcontent), &bozo);
 	if (ll < 0) return 1;
 
@@ -506,7 +559,7 @@ int main(int argc, char **argv) {
 	fwrite(bozo, sizeof(char), ll, db);
 	fclose(db);
 
-	printf("Beginning parse process...\n");
+	printf("====== VIEW STATE PARSER by Daniel Ferreira; Public Domain. ======\n");
 	type *t = parse_viewstate((unsigned char **)&bozo, true);
 
 	return 0;
