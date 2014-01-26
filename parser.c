@@ -20,7 +20,7 @@
 #define SHIFT_VIEWSTATE(v) (*((*v)++))
 
 // Not my function, but I know what it's doing.
-static int base64_decode(const char *string, size_t len, char **output) {
+int base64_decode(const char *string, size_t len, char **output) {
 	if (len < 1 || string == NULL) return -1;
 	
 	base64_decodestate s;
@@ -181,7 +181,9 @@ vsType *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 	vsType *ret = (vsType *)malloc(sizeof(vsType));
 	
 	if (needsHeader) {
-		if (SHIFT_VIEWSTATE(viewState) != kUTF16Encoding) {
+		printf("BYTE %d %d\n", *(*viewState), *((*viewState)+1));
+        
+        if (SHIFT_VIEWSTATE(viewState) != kUTF16Encoding) {
 			ret->error = 1;
 			ret->stateType = kViewStateTypeError;
 			return ret;
@@ -194,10 +196,10 @@ vsType *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 
 		// Initialize type map with standard view state types.
 		typeDescriptionMap = (char **)calloc(4, sizeof(char *));
-		typeDescriptionMap[kViewStateArrayTypeObject] = (char *)"System.Object";
-		typeDescriptionMap[kViewStateArrayTypeInt] = (char *)"System.Int32";
-		typeDescriptionMap[kViewStateArrayTypeString] = (char *)"System.String";
-		typeDescriptionMap[kViewStateArrayTypeBoolean] = (char *)"System.Boolean";
+		typeDescriptionMap[kViewStateArrayTypeObject] = "System.Object";
+		typeDescriptionMap[kViewStateArrayTypeInt] = "System.Int32";
+		typeDescriptionMap[kViewStateArrayTypeString] = "System.String";
+		typeDescriptionMap[kViewStateArrayTypeBoolean] = "System.Boolean";
 		typeDescriptionMapIndex = kViewStateNumberOfDefaultTypes;
 	}
 	
@@ -354,13 +356,12 @@ vsType *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 			LOG("PAIR\n");
 			ITAB;
 			ret->pair = (vsPair *)malloc(sizeof(vsPair));
-			printf("PTR TO PAIR IS %p", ret->pair);
+            
 			ret->pair->first = parse_viewstate(viewState, false);
 			ret->pair->second = parse_viewstate(viewState, false);
 			ETAB;
 
 			ret->stateType = kViewStateTypePair;
-            printf("PTR TO PAIR IS 222 %p", ret->pair);
 			break;
 		}
 
@@ -457,7 +458,7 @@ vsType *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 		case kViewStateBooleanFalse: {
 			ret->boolean = false;
 			ret->stateType = kViewStateTypeBoolean;
-
+            
 			LOG("FALSE\n");
 			break;
 		}
