@@ -26,7 +26,7 @@ static int base64_decode(const char *string, size_t len, char **output) {
 	base64_decodestate s;
 	size_t retlen;
 	
-	if ((*output = malloc(sizeof(unsigned char) * (size_t)((double)len / (double)(4/3)) + 1)) == NULL)
+	if ((*output = (char *)calloc((size_t)((double)len / (double)(4/3)) + 1, sizeof(unsigned char))) == NULL)
 		return -1;
 	printf("*output = %p\n", *output);
 	
@@ -82,7 +82,6 @@ static int base64_decode(const char *string, size_t len, char **output) {
 * Takes an index to get a value from the indexed string cache */
 static char **indexedStringCache = NULL;
 static unsigned int indexedStringCacheIndex = 0;
-static size_t indexedStringCacheSize = 0;
 
 char *get_from_indexedstring_cache(int idx) {
 	if (idx >= indexedStringCacheIndex) return NULL;
@@ -93,7 +92,6 @@ char *get_from_indexedstring_cache(int idx) {
 * Takes a type and prints its description. I'm lazy to implement a hashtable. */
 static char **typeDescriptionMap;
 static unsigned int typeDescriptionMapIndex = 0;
-static size_t typeDescriptionMapSize = 0;
 
 char *get_type_description(int type) {
 	if (type >= typeDescriptionMapIndex) return NULL;
@@ -135,8 +133,8 @@ int read_type_format(unsigned char **viewState) {
 		case kViewStateShortTypeFlag: {
 			int32_t len = read_viewstate_int(viewState);
 			
-			char *string = malloc(len * sizeof(char));
-			typeDescriptionMap = realloc(typeDescriptionMap, (typeDescriptionMapIndex+1)*sizeof(char*));
+			char *string = (char *)calloc(len, sizeof(char));
+			typeDescriptionMap = (char **)realloc(typeDescriptionMap, (typeDescriptionMapIndex+1)*sizeof(char*));
 
 			int32_t i;
 			for (i=0; i<len; i++) {
@@ -164,20 +162,23 @@ int read_type_format(unsigned char **viewState) {
 * viewState is the view state string
 * needsHeader defines whether we should check for file validity. */
 
-#define LOG_PASS
+/* Log Pass debug {{{ */
+//#define LOG_PASS
 #ifdef LOG_PASS
 char tab[200];
 static int _i=0;
-
 #define ITAB tab[_i]='\t';tab[++_i]='\0';
 #define ETAB tab[_i]='\t';tab[--_i]='\0';
 #define LOG(...) {printf("%s",tab);printf(__VA_ARGS__);}
 #else
+#define ITAB
+#define ETAB
 #define LOG(...)
 #endif
+/* }}} */
 
 vsType *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
-	vsType *ret = malloc(sizeof(vsType));
+	vsType *ret = (vsType *)malloc(sizeof(vsType));
 	
 	if (needsHeader) {
 		if (SHIFT_VIEWSTATE(viewState) != kUTF16Encoding) {
@@ -192,11 +193,11 @@ vsType *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 		}
 
 		// Initialize type map with standard view state types.
-		typeDescriptionMap = (char **)malloc(4 * sizeof(char*));
-		typeDescriptionMap[kViewStateArrayTypeObject] = "System.Object";
-		typeDescriptionMap[kViewStateArrayTypeInt] = "System.Int32";
-		typeDescriptionMap[kViewStateArrayTypeString] = "System.String";
-		typeDescriptionMap[kViewStateArrayTypeBoolean] = "System.Boolean";
+		typeDescriptionMap = (char **)calloc(4, sizeof(char *));
+		typeDescriptionMap[kViewStateArrayTypeObject] = (char *)"System.Object";
+		typeDescriptionMap[kViewStateArrayTypeInt] = (char *)"System.Int32";
+		typeDescriptionMap[kViewStateArrayTypeString] = (char *)"System.String";
+		typeDescriptionMap[kViewStateArrayTypeBoolean] = (char *)"System.Boolean";
 		typeDescriptionMapIndex = kViewStateNumberOfDefaultTypes;
 	}
 	
@@ -232,7 +233,7 @@ vsType *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 		case kViewStateString: {
 			int32_t len = read_viewstate_int(viewState);
 			// This is a weird encoding. Can the char type hold this?
-			char *string = malloc((len+1) * sizeof(char));
+			char *string = (char *)calloc(len+1, sizeof(char));
 			
 			int32_t i;
 			for (i=0; i<len; i++) {
@@ -250,7 +251,7 @@ vsType *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 		case kViewStateArray: {
 			int typ = read_type_format(viewState);
 			int32_t len = read_viewstate_int(viewState);
-			vsType **values = malloc(sizeof(vsType *) * len);
+			vsType **values = (vsType **)calloc(len, sizeof(vsType *));
 			
 			LOG("ARRAY: %d\n", typ);
 			ITAB;
@@ -259,21 +260,22 @@ vsType *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 				values[i] = parse_viewstate(viewState, false);
 			}
 			ETAB;
-
-			ret->array.array = values;
-			ret->array.type = typ;
-			ret->array.length = len;
+			
+			ret->array = (vsTypeArray *)malloc(sizeof(vsTypeArray));
+			ret->array->array = values;
+			ret->array->type = typ;
+			ret->array->length = len;
 			ret->stateType = kViewStateTypeArray;
 			break;
 		}
 		
 		case kViewStateWeirdArray: {
 			int typ = read_type_format(viewState);
-			unsigned char unknown1 = SHIFT_VIEWSTATE(viewState);
+			SHIFT_VIEWSTATE(viewState); // Unknown byte 1
 			int32_t len = read_viewstate_int(viewState);
-			unsigned char unknown2 = SHIFT_VIEWSTATE(viewState);
+			SHIFT_VIEWSTATE(viewState); // Unknown byte 2
 
-			vsType **values = malloc(sizeof(vsType *) * len);
+			vsType **values = (vsType **)calloc(len, sizeof(vsType *));
 			
 			LOG("WEIRD_ARRAY: %d (len = %d)\n", typ, len);
 			ITAB;
@@ -287,10 +289,11 @@ vsType *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 				}
 			}
 			ETAB;
-
-			ret->array.array = values;
-			ret->array.type = typ;
-			ret->array.length = len;
+            
+            ret->array = (vsTypeArray *)malloc(sizeof(vsTypeArray));
+			ret->array->array = values;
+			ret->array->type = typ;
+			ret->array->length = len;
 			ret->stateType = kViewStateTypeArray;
 			break;
 	
@@ -298,14 +301,14 @@ vsType *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 
 		case kViewStateStringArray: {
 			int32_t len = read_viewstate_int(viewState);
-			char **strings = malloc(len * sizeof(char *)); // BUG BUG BUG
+			char **strings = (char **)calloc(len, sizeof(char *)); // BUG BUG BUG
 			
 			LOG("STRING ARRAY\n");
 			ITAB;
 			int32_t i;
 			for (i=0; i<len; i++) {
 				int32_t slen = read_viewstate_int(viewState);
-				char *string = malloc(sizeof(char) * slen);
+				char *string = (char *)calloc(slen, sizeof(char));
 				
 				int32_t j;
 				for (j=0; j<slen; j++) {
@@ -322,7 +325,7 @@ vsType *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 
 		case kViewStateArrayList: {
 			int32_t len = read_viewstate_int(viewState);
-			vsType **list = malloc(sizeof(vsType *) * len);
+			vsType **list = (vsType **)calloc(len, sizeof(vsType *));
 			
 			LOG("ARRAY LIST\n");
 			ITAB;
@@ -350,20 +353,24 @@ vsType *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 		case kViewStatePair: {
 			LOG("PAIR\n");
 			ITAB;
-			ret->pair.first = parse_viewstate(viewState, false);
-			ret->pair.second = parse_viewstate(viewState, false);
+			ret->pair = (vsPair *)malloc(sizeof(vsPair));
+			printf("PTR TO PAIR IS %p", ret->pair);
+			ret->pair->first = parse_viewstate(viewState, false);
+			ret->pair->second = parse_viewstate(viewState, false);
 			ETAB;
 
 			ret->stateType = kViewStateTypePair;
+            printf("PTR TO PAIR IS 222 %p", ret->pair);
 			break;
 		}
 
 		case kViewStateTriplet: {
 			LOG("TRIPLET\n");
 			ITAB;
-			ret->triplet.first = parse_viewstate(viewState, false);
-			ret->triplet.second = parse_viewstate(viewState, false);
-			ret->triplet.third = parse_viewstate(viewState, false);
+			ret->triplet = (vsTriplet *)malloc(sizeof(vsTriplet));
+			ret->triplet->first = parse_viewstate(viewState, false);
+			ret->triplet->second = parse_viewstate(viewState, false);
+			ret->triplet->third = parse_viewstate(viewState, false);
 			ETAB;
 
 			ret->stateType = kViewStateTypeTriplet;
@@ -372,7 +379,7 @@ vsType *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 
 		case kViewStateHybridDictionary: {
 			int32_t len = read_viewstate_int(viewState);
-			ret->dictionary.kvPairs = malloc(len * sizeof(vsPair));
+			ret->dictionary.kvPairs = (vsPair *)calloc(len, sizeof(vsPair));
 			
 			LOG("HYBRID DICTIONARY\n");
 			ITAB;
@@ -391,7 +398,7 @@ vsType *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 
 			indexedStringCache = (char **)realloc(indexedStringCache, (indexedStringCacheIndex+1) * sizeof(char*));
 			
-			char *string = malloc(len * sizeof(char));//indexedStringCache[indexedStringCacheIndex++];
+			char *string = (char *)calloc(len, sizeof(char));//indexedStringCache[indexedStringCacheIndex++];
 			int32_t i;
 			for (i=0; i<len; i++) {
 				string[i] = SHIFT_VIEWSTATE(viewState);
@@ -471,8 +478,7 @@ vsType *parse_viewstate(unsigned char **viewState, _Bool needsHeader) {
 	return ret;
 }
 
-static char fcontent[1048576];
-
+/*static char fcontent[1048576];
 int main(int argc, char **argv) {
 	FILE *f = fopen(argv[1], "r");
 	fread(fcontent, sizeof(char), 1048576, f);
@@ -490,4 +496,4 @@ int main(int argc, char **argv) {
 	vsType *t = parse_viewstate((unsigned char **)&bozo, true);
 
 	return 0;
-}
+}*/
